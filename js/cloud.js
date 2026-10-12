@@ -16,6 +16,7 @@ export const cloud = {
   message: '',
   lastSync: null,
   user: null,
+  role: null,           // admin / member
   live: false,          // リアルタイム接続中か
   onStatus(fn) { listeners.add(fn); return () => listeners.delete(fn); },
 };
@@ -56,7 +57,7 @@ function niceError(e) {
   const m = e?.message || String(e);
   if (/invalid login/i.test(m)) return 'メールアドレスまたはパスワードが違います';
   if (/provider is not enabled|Unsupported provider/i.test(m)) return 'Googleログインがまだ有効になっていません（Supabase の Authentication → Providers で Google を有効化してください）';
-  if (/relation .* does not exist|PGRST205|Could not find the table/i.test(m)) return 'データベースの準備がまだです（supabase/setup.sql を実行してください）';
+  if (/relation .* does not exist|PGRST205|PGRST202|Could not find the (table|function)/i.test(m)) return 'データベースの準備がまだです（supabase/setup.sql を実行してください）';
   if (/row-level security|permission denied|42501/i.test(m)) return 'このアカウントには編集権限がありません（許可メンバーに登録されているか確認してください）';
   if (/Failed to fetch|NetworkError|Load failed/i.test(m)) return 'ネットワークに接続できません';
   return m;
@@ -155,10 +156,11 @@ function subscribe() {
     });
 }
 
-// 許可メンバーか確認
+// 許可メンバーか確認（判定はDB側の関数。メール確認済みの登録メンバーだけが admin / member を返す）
 async function checkMember() {
-  const { data, error } = await sb.from('ra_members').select('email').eq('email', cloud.user.toLowerCase()).maybeSingle();
+  const { data, error } = await sb.rpc('ra_my_role');
   if (error) throw error;
+  cloud.role = data || null;
   return !!data;
 }
 
@@ -217,13 +219,19 @@ export async function listMembers() {
   if (error) throw new Error(niceError(error));
   return data;
 }
-export async function addMember(email, name) {
-  const { error } = await sb.from('ra_members').insert({ email: email.trim().toLowerCase(), name: name.trim() });
+export async function addMember(email, name, role = 'member') {
+  const { error } = await sb.from('ra_members').insert({ email: email.trim().toLowerCase(), name: name.trim(), role });
   if (error) throw new Error(/duplicate/i.test(error.message) ? 'すでに登録されています' : niceError(error));
 }
-export async function removeMember(email) {
-  const { error } = await sb.from('ra_members').delete().eq('email', email);
+export async function setMemberRole(email, role) {
+  const { data, error } = await sb.from('ra_members').update({ role }).eq('email', email).select('email');
   if (error) throw new Error(niceError(error));
+  if (!data?.length) throw new Error('変更できませんでした（自分自身の権限は変更できません）');
+}
+export async function removeMember(email) {
+  const { data, error } = await sb.from('ra_members').delete().eq('email', email).select('email');
+  if (error) throw new Error(niceError(error));
+  if (!data?.length) throw new Error('外せませんでした（管理者のみ操作できます。自分自身は外せません）');
 }
 
 // 接続テスト（設定画面用）

@@ -3,7 +3,7 @@ import { store } from './store.js';
 import { statuses, STAGES, appRow, applications, fmtDate, fmtDateTime, fmtTimeRange, nameOf, eventsFor, nextUpcoming, ensureStatuses } from './model.js';
 import { esc, $, icon, toast, confirmDialog, opts, downloadFile, openPopover } from './ui.js';
 import { recordLabel, removeRecord, stageOptions } from './forms.js';
-import { cloud, getConfig, saveConfig, clearConfig, testConnection, signOut, syncNow, listMembers, addMember, removeMember } from './cloud.js';
+import { cloud, getConfig, saveConfig, clearConfig, testConnection, signOut, syncNow, listMembers, addMember, removeMember, setMemberRole } from './cloud.js';
 import { insertDemo, removeDemo, demoCount } from './demo.js';
 
 const KIND_LABEL = { ca: 'CA', candidate: '求職者', company: '企業', application: '応募', event: '予定', status: 'ステータス' };
@@ -51,12 +51,15 @@ async function drawMembers() {
   if (!box || cloud.status === 'login') return;
   let list = [];
   let err = '';
+  const admin = cloud.role === 'admin';
   try { list = await listMembers(); } catch (e) { err = e.message; }
   box.innerHTML = `<div class="panel-head"><div>${icon('lock')}<h3>許可メンバー（閲覧・編集できる人）</h3><span class="count">${list.length}名</span></div></div><div class="pad">
-    <p class="small muted">ここに登録したメールアドレスの人だけがログイン後にデータを見られます。Googleログインの場合はGoogleアカウントのメールアドレスを登録してください</p>
+    <p class="small muted">ここに登録したメールアドレスの人だけがログイン後にデータを見られます。Googleログインの場合はGoogleアカウントのメールアドレスを登録してください。<br>「管理者」はメンバーの追加・変更・削除ができます。「メンバー」はデータの閲覧・編集のみです</p>
     ${err ? `<p class="state-line warn">${icon('alert')}${esc(err)}</p>` : ''}
-    <ul class="member-list">${list.map(m => `<li data-member="${esc(m.email)}"><span class="avatar sm">${esc((m.name || m.email).slice(0, 1))}</span><b>${esc(m.name || '')}</b><span>${esc(m.email)}</span>${m.email === (cloud.user || '').toLowerCase() ? '<span class="tag st-green">あなた</span>' : `<span class="grow"></span><button class="btn xs danger ghost" data-member-del>${icon('trash')}外す</button>`}</li>`).join('')}</ul>
-    <div class="member-add"><input id="m-name" placeholder="名前（例：代表 山田）"><input id="m-email" type="email" placeholder="メールアドレス（Gmail など）"><button class="btn primary" data-member-add>${icon('plus')}メンバーを追加</button></div></div>`;
+    <ul class="member-list">${list.map(m => { const me = m.email === (cloud.user || '').toLowerCase(); return `<li data-member="${esc(m.email)}"><span class="avatar sm">${esc((m.name || m.email).slice(0, 1))}</span><b>${esc(m.name || '')}</b><span>${esc(m.email)}</span>
+      ${admin && !me ? `<select data-member-role>${opts([['member', 'メンバー'], ['admin', '管理者']], m.role)}</select>` : `<span class="tag ${m.role === 'admin' ? 'st-peach' : 'st-blue'}">${m.role === 'admin' ? '管理者' : 'メンバー'}</span>`}
+      ${me ? '<span class="tag st-green">あなた</span>' : admin ? `<span class="grow"></span><button class="btn xs danger ghost" data-member-del>${icon('trash')}外す</button>` : ''}</li>`; }).join('')}</ul>
+    ${admin ? `<div class="member-add"><input id="m-name" placeholder="名前（例：代表 山田）"><input id="m-email" type="email" placeholder="メールアドレス（Gmail など）"><select id="m-role">${opts([['member', 'メンバー'], ['admin', '管理者']], 'member')}</select><button class="btn primary" data-member-add>${icon('plus')}追加</button></div>` : '<p class="small muted">メンバーの追加・削除は管理者に依頼してください</p>'}</div>`;
 }
 
 function drawData() {
@@ -134,7 +137,7 @@ async function onClick(e) {
   if (t.closest('[data-member-add]')) {
     const email = $('#m-email').value.trim(), name = $('#m-name').value.trim();
     if (!/^\S+@\S+\.\S+$/.test(email)) return toast('メールアドレスを正しく入力してください', 'err');
-    try { await addMember(email, name); toast(`${email} を追加しました。この人はログインすると利用できます`); drawMembers(); } catch (err) { toast(err.message, 'err'); }
+    try { await addMember(email, name, $('#m-role').value); toast(`${email} を追加しました。この人はログインすると利用できます`); drawMembers(); } catch (err) { toast(err.message, 'err'); }
   }
   const mem = t.closest('[data-member]');
   if (mem && t.closest('[data-member-del]')) {
@@ -163,6 +166,11 @@ async function onClick(e) {
 async function onChange(e) {
   const t = e.target;
   const st = t.closest('[data-st]');
+  const mem = t.closest('[data-member]');
+  if (mem && t.matches('[data-member-role]')) {
+    try { await setMemberRole(mem.dataset.member, t.value); toast('権限を変更しました'); } catch (err) { toast(err.message, 'err'); }
+    drawMembers();
+  }
   if (st && t.matches('[data-st-stage]')) { await store.patch(st.dataset.st, { stage: t.value }); toast('集計区分を変更しました'); }
   if (st && t.matches('[data-st-color]')) { await store.patch(st.dataset.st, { color: t.value }); toast('色を変更しました'); }
   if (t.matches('[data-import]') && t.files[0]) {
