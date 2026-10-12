@@ -1,0 +1,8 @@
+# 個人情報を含むファイルは公開しない
+*.csv
+*バックアップ*.json
+backup*/
+__pycache__/
+*.pyc
+Thumbs.db
+.DS_Store
